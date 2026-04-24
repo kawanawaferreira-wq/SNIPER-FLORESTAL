@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>SNIPER GHOST MOBILE</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#7ab7e8;font-family:Arial,sans-serif;user-select:none}
+canvas{display:block}#ui{position:fixed;inset:0;pointer-events:none;color:white;z-index:5}
+.card{background:rgba(0,0,0,.55);padding:10px 14px;border-radius:14px;margin:10px;font-weight:bold;backdrop-filter:blur(6px)}
+#top{display:flex;gap:8px;flex-wrap:wrap}#cross{position:fixed;left:50%;top:50%;width:22px;height:22px;transform:translate(-50%,-50%);z-index:8;pointer-events:none}
+#cross:before,#cross:after{content:"";position:absolute;background:red}#cross:before{left:10px;top:0;width:2px;height:22px}#cross:after{left:0;top:10px;width:22px;height:2px}
+#menu,#over{position:fixed;inset:0;z-index:20;background:linear-gradient(#102030dd,#000d);display:flex;align-items:center;justify-content:center;color:white;text-align:center;padding:20px}
+.panel{max-width:650px;background:rgba(0,0,0,.45);padding:28px;border-radius:24px}h1{font-size:48px;margin:0 0 12px}
+button{border:0;border-radius:14px;padding:14px 22px;margin:8px;font-weight:bold;font-size:18px;cursor:pointer;background:#8cff58;color:#102000}
+#mobile{position:fixed;inset:0;z-index:15;pointer-events:none;display:none}
+.pad{position:absolute;bottom:28px;width:130px;height:130px;border-radius:50%;background:rgba(255,255,255,.14);border:2px solid rgba(255,255,255,.25);pointer-events:auto}
+#joy{left:24px}.knob{position:absolute;left:45px;top:45px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.55)}
+#look{right:0;top:0;width:55%;height:100%;position:absolute;pointer-events:auto}
+.mbtn{position:absolute;right:22px;border-radius:50%;width:64px;height:64px;background:rgba(0,0,0,.55);border:2px solid #fff8;color:white;display:flex;align-items:center;justify-content:center;font-weight:bold;pointer-events:auto}
+#shoot{bottom:46px;width:82px;height:82px;background:rgba(255,40,40,.75)}#scope{bottom:140px}#reload{bottom:218px}#run{bottom:296px}#pause{top:18px;right:18px}
+@media(max-width:900px){#mobile{display:block}.card{font-size:13px;padding:8px 10px;margin:6px}h1{font-size:34px}}
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="top">
+    <div class="card">PONTOS: <span id="score">0</span></div>
+    <div class="card">VIDA: <span id="hp">100</span></div>
+    <div class="card">MUNIÇÃO: <span id="ammo">5/35</span></div>
+    <div class="card">XP: <span id="xp">0</span></div>
+    <div class="card">ALVOS: <span id="kills">0</span></div>
+  </div>
+</div>
+<div id="cross"></div>
+
+<div id="mobile">
+  <div id="look"></div>
+  <div id="joy" class="pad"><div id="knob" class="knob"></div></div>
+  <div id="shoot" class="mbtn">TIRO</div>
+  <div id="scope" class="mbtn">MIRA</div>
+  <div id="reload" class="mbtn">R</div>
+  <div id="run" class="mbtn">RUN</div>
+  <div id="pause" class="mbtn">II</div>
+</div>
+
+<div id="menu">
+  <div class="panel">
+    <h1>SNIPER GHOST</h1>
+    <p>Versão mobile com HUD, sons, inimigos vivos, animais animados, árvores balançando e cenário mais realista.</p>
+    <button onclick="startGame()">INICIAR</button>
+  </div>
+</div>
+
+<div id="over" style="display:none">
+  <div class="panel">
+    <h1>FIM DE JOGO</h1>
+    <p>Pontuação: <span id="finalScore">0</span></p>
+    <button onclick="location.reload()">JOGAR DE NOVO</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+let scene,camera,renderer,clock,started=false,paused=false;
+let score=0,xp=0,hp=100,kills=0,mag=5,reserve=35,reloading=false;
+let yaw=Math.PI,pitch=0,scoped=false,run=false;
+let pos=new THREE.Vector3(0,8,80),vel=new THREE.Vector3();
+let keys={},animals=[],enemies=[],trees=[],birds=[],bullets=[];
+let joy={x:0,y:0,active:false},lastStep=0;
+
+const $=id=>document.getElementById(id);
+const rand=(a,b)=>a+Math.random()*(b-a);
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+class AudioFX{
+ constructor(){this.ctx=null}
+ init(){if(!this.ctx)this.ctx=new (window.AudioContext||window.webkitAudioContext)()}
+ tone(f,d=.08,type="sine",g=.04){
+  if(!this.ctx)return;let o=this.ctx.createOscillator(),v=this.ctx.createGain(),t=this.ctx.currentTime;
+  o.type=type;o.frequency.value=f;v.gain.setValueAtTime(.0001,t);v.gain.exponentialRampToValueAtTime(g,t+.01);v.gain.exponentialRampToValueAtTime(.0001,t+d);
+  o.connect(v);v.connect(this.ctx.destination);o.start(t);o.stop(t+d+.03)
+ }
+ shot(){this.init();this.tone(90,.08,"sawtooth",.08);this.tone(45,.13,"triangle",.05)}
+ reload(){this.init();this.tone(210,.05,"square",.035);setTimeout(()=>this.tone(330,.05,"square",.03),180);setTimeout(()=>this.tone(160,.06,"square",.03),420)}
+ step(){this.init();this.tone(rand(65,90),.035,"triangle",.015)}
+ hit(){this.init();this.tone(620,.045,"square",.04);setTimeout(()=>this.tone(800,.035,"square",.03),45)}
+ hurt(){this.init();this.tone(120,.18,"sawtooth",.05)}
+ animal(){this.init();this.tone(rand(240,360),.12,"triangle",.02)}
+ btn(){this.init();this.tone(520,.035,"triangle",.025)}
+}
+const audio=new AudioFX();
+
+function makeMat(c){return new THREE.MeshStandardMaterial({color:c,roughness:1})}
+function heightAt(x,z){return Math.sin(x*.01)*6+Math.cos(z*.008)*5+Math.sin((x+z)*.004)*4}
+
+function init(){
+ scene=new THREE.Scene();
+ scene.background=new THREE.Color(0x86c9f5);
+ scene.fog=new THREE.Fog(0x9bc4e9,120,900);
+ camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,2500);
+ renderer=new THREE.WebGLRenderer({antialias:true});
+ renderer.setSize(innerWidth,innerHeight);
+ renderer.setPixelRatio(Math.min(devicePixelRatio,1.6));
+ renderer.shadowMap.enabled=true;
+ document.body.appendChild(renderer.domElement);
+ clock=new THREE.Clock();
+
+ scene.add(new THREE.HemisphereLight(0xdff3ff,0x324020,.7));
+ let sun=new THREE.DirectionalLight(0xffffff,1.1);sun.position.set(180,300,120);sun.castShadow=true;scene.add(sun);
+
+ let geo=new THREE.PlaneGeometry(1600,1600,120,120);
+ let p=geo.attributes.position;
+ for(let i=0;i<p.count;i++){let x=p.getX(i),z=p.getY(i);p.setZ(i,heightAt(x,z))}
+ geo.computeVertexNormals();
+ let ground=new THREE.Mesh(geo,makeMat(0x405c2f));ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);
+
+ for(let i=0;i<140;i++)createTree(rand(-760,760),rand(-760,760));
+ for(let i=0;i<16;i++)createAnimal();
+ for(let i=0;i<8;i++)createEnemy();
+ for(let i=0;i<18;i++)createBird();
+
+ bind();
+ animate();
+}
+function createTree(x,z){
+ let g=new THREE.Group();g.userData.baseX=x;g.userData.baseZ=z;g.userData.phase=rand(0,10);
+ let trunk=new THREE.Mesh(new THREE.CylinderGeometry(.8,1.2,12,7),makeMat(0x5b3824));trunk.position.y=6;trunk.castShadow=true;g.add(trunk);
+ for(let i=0;i<3;i++){let c=new THREE.Mesh(new THREE.SphereGeometry(rand(4,6),8,8),makeMat([0x244d24,0x2f642d,0x386b32][Math.floor(rand(0,3))]));c.position.set(rand(-1.5,1.5),12+i*3,rand(-1.5,1.5));c.castShadow=true;g.add(c)}
+ g.position.set(x,heightAt(x,z),z);g.scale.setScalar(rand(.8,1.4));scene.add(g);trees.push(g)
+}
+function createAnimal(){
+ let g=new THREE.Group();g.userData={hp:80,dir:rand(0,Math.PI*2),speed:rand(5,9),kind:"animal",phase:rand(0,9),dead:false};
+ let body=new THREE.Mesh(new THREE.BoxGeometry(5,2.4,8),makeMat(0x8a5a30));body.position.y=5;body.castShadow=true;g.add(body);
+ let head=new THREE.Mesh(new THREE.BoxGeometry(2.2,2,2.5),makeMat(0x9a6842));head.position.set(0,6.4,-4.7);head.castShadow=true;g.add(head);
+ for(let x of[-1.5,1.5])for(let z of[-2.4,2.4]){let l=new THREE.Mesh(new THREE.CylinderGeometry(.35,.45,4,6),makeMat(0x3b2a20));l.position.set(x,2.5,z);l.castShadow=true;g.add(l)}
+ spawnEntity(g);scene.add(g);animals.push(g)
+}
+function createEnemy(){
+ let g=new THREE.Group();g.userData={hp:130,dir:rand(0,Math.PI*2),speed:rand(4,7),kind:"enemy",phase:rand(0,9),cool:rand(1,3),dead:false};
+ let torso=new THREE.Mesh(new THREE.BoxGeometry(2.8,4.5,1.8),makeMat(0x334522));torso.position.y=7;torso.castShadow=true;g.add(torso);
+ let head=new THREE.Mesh(new THREE.SphereGeometry(1.2,12,12),makeMat(0xc09a73));head.position.y=10.2;head.castShadow=true;g.add(head);
+ let gun=new THREE.Mesh(new THREE.BoxGeometry(3,.25,.25),makeMat(0x111111));gun.position.set(1.8,7.5,-.7);g.add(gun);
+ for(let x of[-.7,.7]){let l=new THREE.Mesh(new THREE.CylinderGeometry(.35,.45,4,6),makeMat(0x222820));l.position.set(x,3.2,0);g.add(l)}
+ spawnEntity(g);scene.add(g);enemies.push(g)
+}
+function spawnEntity(g){
+ let x=rand(-650,650),z=rand(-650,-120);
+ g.position.set(x,heightAt(x,z),z);
+ g.userData.hp=g.userData.kind==="enemy"?130:80;
+ g.userData.dead=false;g.visible=true;
+}
+function createBird(){
+ let b=new THREE.Mesh(new THREE.ConeGeometry(1.2,3,3),new THREE.MeshBasicMaterial({color:0x111111}));
+ b.userData={a:rand(0,Math.PI*2),r:rand(160,500),h:rand(80,160),s:rand(.3,.8)};
+ scene.add(b);birds.push(b)
+}
+
+function bind(){
+ addEventListener("keydown",e=>{keys[e.code]=true;if(e.code==="KeyR")reload();if(e.code==="ShiftLeft")run=true});
+ addEventListener("keyup",e=>{keys[e.code]=false;if(e.code==="ShiftLeft")run=false});
+ addEventListener("mousemove",e=>{if(document.pointerLockElement===document.body){yaw-=e.movementX*.002;pitch-=e.movementY*.002;pitch=clamp(pitch,-1.2,1.2)}});
+ addEventListener("mousedown",e=>{if(!started)return;if(document.pointerLockElement!==document.body)document.body.requestPointerLock();else if(e.button===0)shoot();if(e.button===2)scoped=true});
+ addEventListener("mouseup",e=>{if(e.button===2)scoped=false});
+ addEventListener("contextmenu",e=>e.preventDefault());
+ addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+
+ $("shoot").ontouchstart=e=>{e.preventDefault();audio.btn();shoot()};
+ $("reload").ontouchstart=e=>{e.preventDefault();audio.btn();reload()};
+ $("scope").ontouchstart=e=>{e.preventDefault();audio.btn();scoped=true};
+ $("scope").ontouchend=e=>{e.preventDefault();scoped=false};
+ $("run").ontouchstart=e=>{e.preventDefault();run=true};
+ $("run").ontouchend=e=>{e.preventDefault();run=false};
+ $("pause").ontouchstart=e=>{e.preventDefault();paused=!paused;audio.btn()};
+
+ let look=$("look"),lx=0,ly=0;
+ look.ontouchstart=e=>{lx=e.touches[0].clientX;ly=e.touches[0].clientY};
+ look.ontouchmove=e=>{e.preventDefault();let t=e.touches[0];yaw-=(t.clientX-lx)*.006;pitch-=(t.clientY-ly)*.006;pitch=clamp(pitch,-1.2,1.2);lx=t.clientX;ly=t.clientY};
+
+ let joyEl=$("joy"),knob=$("knob");
+ joyEl.ontouchstart=e=>{joy.active=true};
+ joyEl.ontouchmove=e=>{e.preventDefault();let r=joyEl.getBoundingClientRect(),t=e.touches[0],cx=r.left+r.width/2,cy=r.top+r.height/2;let dx=t.clientX-cx,dy=t.clientY-cy,d=Math.hypot(dx,dy),m=45;if(d>m){dx=dx/d*m;dy=dy/d*m}joy.x=dx/m;joy.y=dy/m;knob.style.left=45+dx+"px";knob.style.top=45+dy+"px"};
+ joyEl.ontouchend=e=>{joy.active=false;joy.x=0;joy.y=0;knob.style.left="45px";knob.style.top="45px"};
+}
+
+function startGame(){
+ started=true;$("menu").style.display="none";audio.init();
+ try{document.body.requestPointerLock()}catch(e){}
+}
+
+function reload(){
+ if(reloading||mag>=5||reserve<=0)return;
+ reloading=true;audio.reload();
+ setTimeout(()=>{let need=5-mag,take=Math.min(need,reserve);mag+=take;reserve-=take;reloading=false;updateHUD()},900)
+}
+function shoot(){
+ if(paused||reloading)return;
+ if(mag<=0){reload();return}
+ mag--;audio.shot();
+ let origin=camera.position.clone(),dir=new THREE.Vector3(0,0,-1).applyEuler(camera.rotation).normalize();
+ dir.x+=rand(-.006,.006);dir.y+=rand(-.003,.003);dir.z+=rand(-.006,.006);dir.normalize();
+ let ray=new THREE.Raycaster(origin,dir,0,1800),targets=[...animals,...enemies].filter(o=>!o.userData.dead);
+ let hit=ray.intersectObjects(targets,true)[0];
+ if(hit){
+  let obj=hit.object;while(obj.parent&&!obj.userData.kind)obj=obj.parent;
+  obj.userData.hp-=100;audio.hit();
+  if(obj.userData.hp<=0){
+   obj.userData.dead=true;obj.visible=false;kills++;xp+=obj.userData.kind==="enemy"?40:22;
+   let dist=Math.round(origin.distanceTo(obj.position));score+=obj.userData.kind==="enemy"?220+dist:120+Math.round(dist*.5);
+   setTimeout(()=>spawnEntity(obj),obj.userData.kind==="enemy"?5500:3500)
+  }
+ }
+ updateHUD()
+}
+function updateHUD(){
+ $("score").textContent=score;$("hp").textContent=Math.round(hp);$("xp").textContent=xp;$("kills").textContent=kills;$("ammo").textContent=mag+"/"+reserve
+}
+
+function updatePlayer(dt){
+ let forward=new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw));
+ let right=new THREE.Vector3(forward.z,0,-forward.x);
+ let move=new THREE.Vector3();
+ if(keys.KeyW)move.add(forward.clone().multiplyScalar(-1));
+ if(keys.KeyS)move.add(forward);
+ if(keys.KeyA)move.add(right.clone().multiplyScalar(-1));
+ if(keys.KeyD)move.add(right);
+ if(joy.active){move.add(forward.clone().multiplyScalar(joy.y));move.add(right.clone().multiplyScalar(joy.x))}
+ if(move.lengthSq()>0){
+  move.normalize();let speed=run?28:16;pos.addScaledVector(move,speed*dt);
+  if(performance.now()-lastStep>330/(run?1.7:1)){audio.step();lastStep=performance.now()}
+ }
+ pos.x=clamp(pos.x,-760,760);pos.z=clamp(pos.z,-760,760);pos.y=heightAt(pos.x,pos.z)+8;
+ camera.position.copy(pos);
+ camera.rotation.set(pitch,yaw,0,"YXZ");
+ camera.fov=scoped?18:65;camera.updateProjectionMatrix();
+}
+
+function updateLife(dt,t){
+ trees.forEach(tr=>{tr.rotation.z=Math.sin(t*1.4+tr.userData.phase)*.018;tr.rotation.x=Math.cos(t+tr.userData.phase)*.01});
+ animals.forEach(a=>{
+  if(a.userData.dead)return;
+  a.userData.dir+=Math.sin(t+a.userData.phase)*.004;
+  a.position.x+=Math.sin(a.userData.dir)*a.userData.speed*dt;
+  a.position.z+=Math.cos(a.userData.dir)*a.userData.speed*dt;
+  a.position.y=heightAt(a.position.x,a.position.z);
+  a.rotation.y=a.userData.dir;
+  a.rotation.x=Math.sin(t*8+a.userData.phase)*.025;
+  if(Math.random()<.0015)audio.animal();
+ });
+ enemies.forEach(e=>{
+  if(e.userData.dead)return;
+  let d=pos.distanceTo(e.position);
+  if(d<190){
+   e.userData.dir=Math.atan2(pos.x-e.position.x,pos.z-e.position.z);
+   if(d>55){e.position.x+=Math.sin(e.userData.dir)*e.userData.speed*dt;e.position.z+=Math.cos(e.userData.dir)*e.userData.speed*dt}
+   e.userData.cool-=dt;
+   if(e.userData.cool<=0){e.userData.cool=rand(1.2,2.5);if(Math.random()<.35){hp-=rand(5,13);audio.hurt();if(hp<=0)gameOver()}}
+  }else{
+   e.position.x+=Math.sin(e.userData.dir)*e.userData.speed*.35*dt;
+   e.position.z+=Math.cos(e.userData.dir)*e.userData.speed*.35*dt;
+   if(Math.random()<.01)e.userData.dir+=rand(-.5,.5)
+  }
+  e.position.y=heightAt(e.position.x,e.position.z);
+  e.rotation.y=e.userData.dir;
+  e.rotation.x=Math.sin(t*6+e.userData.phase)*.015;
+ });
+ birds.forEach(b=>{b.userData.a+=dt*b.userData.s;b.position.set(Math.cos(b.userData.a)*b.userData.r,b.userData.h+Math.sin(b.userData.a*2)*8,Math.sin(b.userData.a)*b.userData.r);b.rotation.y=-b.userData.a});
+}
+function gameOver(){
+ paused=true;started=false;$("finalScore").textContent=score;$("over").style.display="flex"
+}
+function animate(){
+ requestAnimationFrame(animate);
+ let dt=Math.min(clock.getDelta(),.05),t=clock.elapsedTime;
+ if(started&&!paused){updatePlayer(dt);updateLife(dt,t);updateHUD()}
+ renderer.render(scene,camera);
+}
+init();
+</script>
+</body>
+</html>
